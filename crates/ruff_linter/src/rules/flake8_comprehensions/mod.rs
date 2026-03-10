@@ -14,7 +14,7 @@ mod tests {
     use crate::assert_diagnostics;
     use crate::registry::Rule;
     use crate::settings::LinterSettings;
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::test_path;
 
     #[test_case(Rule::UnnecessaryCallAroundSorted, Path::new("C413.py"))]
@@ -62,7 +62,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("flake8_comprehensions").join(path).as_path(),
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..LinterSettings::for_rule(rule_code)
             },
         )?;

@@ -4,6 +4,7 @@ use ruff_text_size::Ranged;
 
 use crate::checkers::ast::Checker;
 use crate::importer::ImportRequest;
+use crate::preview::is_expanded_pathlib_subclass_check_enabled;
 use crate::{Applicability, Edit, Fix, Violation};
 
 pub(crate) fn is_keyword_only_argument_non_default(arguments: &Arguments, name: &str) -> bool {
@@ -31,7 +32,7 @@ pub(crate) fn is_pure_path_subclass_with_preview(checker: &Checker, segments: &[
         return true;
     }
 
-    if checker.settings().preview.is_enabled() {
+    if is_expanded_pathlib_subclass_check_enabled(checker.settings()) {
         let is_expanded_pathlib = matches!(
             segments,
             [

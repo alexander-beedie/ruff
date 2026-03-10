@@ -77,7 +77,7 @@ mod tests {
     use test_case::test_case;
 
     use crate::registry::Rule;
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::test_path;
     use crate::{assert_diagnostics, settings};
 
@@ -102,7 +102,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("flake8_gettext").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
         )?;

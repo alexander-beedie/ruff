@@ -618,6 +618,10 @@ Options:
       --preview
           Enable preview mode; checks will include unstable rules and fixes.
           Use `--no-preview` to disable
+      --preview-enable <FEATURE>
+          Enable specific preview features by name
+      --preview-exclude <FEATURE>
+          Exclude specific preview features by name (requires --preview)
       --extension <EXTENSION>
           List of mappings from file extension to language (one of `python`,
           `ipynb`, `pyi`). For example, to treat `.ipy` files as IPython
@@ -738,6 +742,10 @@ Options:
       --preview
           Enable preview mode; enables unstable formatting. Use `--no-preview`
           to disable
+      --preview-enable <FEATURE>
+          Enable specific preview features by name
+      --preview-exclude <FEATURE>
+          Exclude specific preview features by name (requires --preview)
       --output-format <OUTPUT_FORMAT>
           Output serialization format for violations, when used with `--check`.
           The default serialization format is "full" [env: RUFF_OUTPUT_FORMAT=]

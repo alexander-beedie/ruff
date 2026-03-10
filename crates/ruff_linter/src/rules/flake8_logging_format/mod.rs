@@ -64,7 +64,9 @@ mod tests {
             Path::new("flake8_logging_format").join(path).as_path(),
             &settings::LinterSettings {
                 logger_objects: vec!["logging_setup.logger".to_string()],
-                preview: settings::types::PreviewMode::Enabled,
+                preview: settings::types::LintPreviewConfig::from(
+                    settings::types::PreviewMode::Enabled,
+                ),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
         )?;

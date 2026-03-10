@@ -3471,6 +3471,8 @@ dependencies = [
  "similar",
  "smallvec",
  "static_assertions",
+ "strum",
+ "strum_macros",
  "thiserror 2.0.18",
  "tracing",
 ]

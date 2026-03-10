@@ -11,7 +11,7 @@ mod tests {
     use crate::registry::Rule;
 
     use crate::settings::LinterSettings;
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::test_path;
     use crate::{assert_diagnostics, assert_diagnostics_diff, settings};
 
@@ -44,11 +44,10 @@ mod tests {
             snapshot,
             Path::new("pygrep_hooks").join(path).as_path(),
             &LinterSettings {
-                preview: PreviewMode::Disabled,
                 ..LinterSettings::for_rule(rule_code)
             },
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..LinterSettings::for_rule(rule_code)
             }
         );

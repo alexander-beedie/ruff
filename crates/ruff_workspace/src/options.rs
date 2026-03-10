@@ -34,7 +34,8 @@ use ruff_linter::rules::{
     pycodestyle, pydoclint, pydocstyle, pyflakes, pylint, pyupgrade, ruff,
 };
 use ruff_linter::settings::types::{
-    IdentifierPattern, Language, OutputFormat, PreviewMode, PythonVersion, RequiredVersion,
+    IdentifierPattern, Language, LintPreviewConfig, OutputFormat, PreviewMode, PythonVersion,
+    RequiredVersion,
 };
 use ruff_linter::{RuleSelector, warn_user_once};
 use ruff_macros::{CombineOptions, OptionsMetadata};
@@ -43,6 +44,43 @@ use ruff_python_ast::name::Name;
 use ruff_python_formatter::{DocstringCodeLineWidth, QuoteStyle};
 use ruff_python_semantic::NameImports;
 use ruff_python_stdlib::identifiers::is_identifier;
+
+/// Preview mode configuration. Accepts either a boolean or a structured object
+/// for granular control over individual preview features.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub enum PreviewOption {
+    /// Enable or disable all preview features.
+    Bool(bool),
+    /// Granular preview feature selection.
+    Granular {
+        /// Whether to enable preview mode globally. Defaults to `false`.
+        mode: Option<bool>,
+        /// List of individual preview features to enable (when `mode` is `false` or omitted).
+        #[serde(default)]
+        enable: Vec<String>,
+        /// List of individual preview features to exclude (when `mode` is `true`).
+        #[serde(default)]
+        exclude: Vec<String>,
+    },
+}
+
+impl PreviewOption {
+    /// Extract the preview mode (global on/off).
+    pub fn mode(&self) -> PreviewMode {
+        match self {
+            PreviewOption::Bool(enabled) => PreviewMode::from(*enabled),
+            PreviewOption::Granular { mode, .. } => PreviewMode::from(mode.unwrap_or(false)),
+        }
+    }
+}
+
+impl Default for PreviewOption {
+    fn default() -> Self {
+        Self::Bool(false)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, OptionsMetadata, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -157,15 +195,26 @@ pub struct Options {
 
     /// Whether to enable preview mode. When preview mode is enabled, Ruff will
     /// use unstable rules, fixes, and formatting.
+    ///
+    /// Accepts a boolean or a structured object for granular control:
+    /// ```toml
+    /// # Enable all preview features.
+    /// preview = true
+    ///
+    /// # Or use granular selection:
+    /// [preview]
+    /// mode = false
+    /// enable = ["feature1"]
+    /// ```
     #[option(
         default = "false",
-        value_type = "bool",
+        value_type = "bool | { mode: bool, enable: list[str], exclude: list[str] }",
         example = r#"
             # Enable preview features.
             preview = true
         "#
     )]
-    pub preview: Option<bool>,
+    pub preview: Option<PreviewOption>,
 
     // File resolver options
     /// A list of file patterns to exclude from formatting and linting.
@@ -539,13 +588,13 @@ pub struct LintOptions {
     /// use unstable rules and fixes.
     #[option(
         default = "false",
-        value_type = "bool",
+        value_type = "bool | { mode: bool, enable: list[str], exclude: list[str] }",
         example = r#"
             # Enable preview features.
             preview = true
         "#
     )]
-    pub preview: Option<bool>,
+    pub preview: Option<PreviewOption>,
 
     /// Whether to allow imports from the third-party `typing_extensions` module for Python versions
     /// before a symbol was added to the first-party `typing` module.
@@ -1691,14 +1740,14 @@ impl<'de> Deserialize<'de> for Alias {
 impl Flake8ImportConventionsOptions {
     pub fn try_into_settings(
         self,
-        preview: PreviewMode,
+        preview_config: &LintPreviewConfig,
     ) -> anyhow::Result<flake8_import_conventions::settings::Settings> {
         let mut aliases: FxHashMap<String, String> = match self.aliases {
             Some(options_aliases) => options_aliases
                 .into_iter()
                 .map(|(module, alias)| (module.into_string(), alias.into_string()))
                 .collect(),
-            None => flake8_import_conventions::settings::default_aliases(preview),
+            None => flake8_import_conventions::settings::default_aliases(preview_config),
         };
         if let Some(extend_aliases) = self.extend_aliases {
             aliases.extend(
@@ -1720,7 +1769,7 @@ impl Flake8ImportConventionsOptions {
         }
 
         let banned_aliases = self.banned_aliases.unwrap_or_else(|| {
-            flake8_import_conventions::settings::default_banned_aliases(preview)
+            flake8_import_conventions::settings::default_banned_aliases(preview_config)
         });
 
         Ok(flake8_import_conventions::settings::Settings {
@@ -3731,13 +3780,13 @@ pub struct FormatOptions {
     /// Whether to enable the unstable preview style formatting.
     #[option(
         default = "false",
-        value_type = "bool",
+        value_type = "bool | { mode: bool, enable: list[str], exclude: list[str] }",
         example = r#"
             # Enable preview style formatting.
             preview = true
         "#
     )]
-    pub preview: Option<bool>,
+    pub preview: Option<PreviewOption>,
 
     /// Whether to use spaces or tabs for indentation.
     ///
@@ -4029,13 +4078,13 @@ pub struct AnalyzeOptions {
     /// commands.
     #[option(
         default = "false",
-        value_type = "bool",
+        value_type = "bool | { mode: bool, enable: list[str], exclude: list[str] }",
         example = r#"
             # Enable preview features.
             preview = true
         "#
     )]
-    pub preview: Option<bool>,
+    pub preview: Option<PreviewOption>,
     /// Whether to generate a map from file to files that it depends on (dependencies) or files that
     /// depend on it (dependents).
     #[option(
@@ -4151,7 +4200,7 @@ pub struct LintOptionsWire {
     exclude: Option<Vec<String>>,
     pydoclint: Option<PydoclintOptions>,
     ruff: Option<RuffOptions>,
-    preview: Option<bool>,
+    preview: Option<PreviewOption>,
     typing_extensions: Option<bool>,
     future_annotations: Option<bool>,
 }
@@ -4273,11 +4322,14 @@ impl From<LintOptionsWire> for LintOptions {
 
 #[cfg(test)]
 mod tests {
-    use crate::options::{Flake8SelfOptions, Flake8TidyImportsOptions};
+    use serde::Deserialize;
+
+    use crate::options::{Flake8SelfOptions, Flake8TidyImportsOptions, PreviewOption};
     use ruff_linter::rules::flake8_self;
     use ruff_linter::rules::flake8_tidy_imports::settings::{
         AllImports, ImportSelection, ImportSelector, ImportSelectorSettings,
     };
+    use ruff_linter::settings::types::PreviewMode;
     use ruff_python_ast::name::Name;
 
     #[test]
@@ -4383,6 +4435,89 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "`require-lazy` and `ban-lazy` must not overlap after applying exclusions"
+        );
+    }
+
+    fn deserialize_preview(toml_str: &str) -> PreviewOption {
+        let parsed: toml::Value = toml::from_str(toml_str).unwrap();
+        PreviewOption::deserialize(parsed.get("preview").unwrap().clone()).unwrap()
+    }
+
+    #[test]
+    fn preview_option_deserialize_bool() {
+        assert_eq!(
+            deserialize_preview("preview = true"),
+            PreviewOption::Bool(true)
+        );
+        assert_eq!(
+            deserialize_preview("preview = false"),
+            PreviewOption::Bool(false)
+        );
+    }
+
+    #[test]
+    fn preview_option_deserialize_granular() {
+        let PreviewOption::Granular {
+            mode,
+            enable,
+            exclude,
+        } = deserialize_preview(
+            r#"
+[preview]
+mode = true
+enable = ["fix-builtin-open"]
+exclude = ["dunder-init-fix-unused-import"]
+"#,
+        )
+        else {
+            panic!("Expected Granular variant");
+        };
+        assert_eq!(mode, Some(true));
+        assert_eq!(enable, vec!["fix-builtin-open".to_string()]);
+        assert_eq!(exclude, vec!["dunder-init-fix-unused-import".to_string()]);
+    }
+
+    #[test]
+    fn preview_option_deserialize_granular_minimal() {
+        let PreviewOption::Granular {
+            mode,
+            enable,
+            exclude,
+        } = deserialize_preview(
+            r#"
+[preview]
+enable = ["fix-builtin-open"]
+"#,
+        )
+        else {
+            panic!("Expected Granular variant");
+        };
+        assert!(mode.is_none());
+        assert_eq!(enable, vec!["fix-builtin-open".to_string()]);
+        assert!(exclude.is_empty());
+    }
+
+    #[test]
+    fn preview_option_mode_extraction() {
+        assert_eq!(PreviewOption::Bool(true).mode(), PreviewMode::Enabled);
+        assert_eq!(PreviewOption::Bool(false).mode(), PreviewMode::Disabled);
+        assert_eq!(
+            PreviewOption::Granular {
+                mode: Some(true),
+                enable: Vec::new(),
+                exclude: Vec::new(),
+            }
+            .mode(),
+            PreviewMode::Enabled
+        );
+        assert_eq!(
+            PreviewOption::Granular {
+                mode: None,
+                enable: vec!["x".to_string()],
+                exclude: Vec::new(),
+            }
+            .mode(),
+            PreviewMode::Disabled
         );
     }
 }

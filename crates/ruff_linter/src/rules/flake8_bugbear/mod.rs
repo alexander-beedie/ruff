@@ -17,7 +17,7 @@ mod tests {
     use crate::settings::LinterSettings;
     use crate::test::{test_path, test_snippet};
 
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use ruff_python_ast::PythonVersion;
 
     #[test_case(Rule::AbstractBaseClassWithoutAbstractMethod, Path::new("B024.py"))]
@@ -106,7 +106,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("flake8_bugbear").join(path).as_path(),
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 unresolved_target_version: PythonVersion::PY314.into(),
                 ..LinterSettings::for_rule(rule_code)
             },

@@ -78,7 +78,7 @@ pub(crate) fn format(
     let (paths, resolver) = project_files_in_path(&files, pyproject_config, config_arguments)?;
 
     let output_format = pyproject_config.settings.output_format;
-    let preview = pyproject_config.settings.formatter.preview;
+    let preview = &pyproject_config.settings.formatter.preview;
 
     if paths.is_empty() {
         warn_user_once!("No Python files found under the given path(s)");

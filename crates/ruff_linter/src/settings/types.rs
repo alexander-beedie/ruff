@@ -12,6 +12,7 @@ use pep440_rs::{VersionSpecifier, VersionSpecifiers};
 use ruff_db::diagnostic::DiagnosticFormat;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Deserializer, Serialize, de};
+use std::collections::BTreeSet;
 use strum_macros::EnumIter;
 
 use ruff_cache::{CacheKey, CacheKeyHasher};
@@ -19,6 +20,7 @@ use ruff_macros::CacheKey;
 use ruff_python_ast::{self as ast, PySourceType, SourceType};
 
 use crate::Applicability;
+use crate::preview::LintPreviewFeature;
 use crate::registry::RuleSet;
 use crate::rule_selector::RuleSelector;
 use crate::{display_settings, fs};
@@ -117,6 +119,71 @@ impl Display for PreviewMode {
         match self {
             Self::Disabled => write!(f, "disabled"),
             Self::Enabled => write!(f, "enabled"),
+        }
+    }
+}
+
+/// Resolved preview configuration that supports granular feature selection.
+///
+/// When `mode` is `Enabled`, all preview features are active unless listed in `excluded_features`.
+/// When `mode` is `Disabled`, only features listed in `enabled_features` are active.
+///
+/// Note: `FormatterPreviewConfig` in `ruff_python_formatter` mirrors this structure.
+/// They are separate types because the formatter crate does not depend on the linter crate.
+#[derive(Debug, Clone, Default, CacheKey)]
+pub struct LintPreviewConfig {
+    pub mode: PreviewMode,
+    pub enabled_features: BTreeSet<LintPreviewFeature>,
+    pub excluded_features: BTreeSet<LintPreviewFeature>,
+}
+
+impl LintPreviewConfig {
+    /// Returns `true` if the given preview feature is enabled.
+    pub fn is_feature_enabled(&self, feature: LintPreviewFeature) -> bool {
+        match self.mode {
+            PreviewMode::Enabled => !self.excluded_features.contains(&feature),
+            PreviewMode::Disabled => self.enabled_features.contains(&feature),
+        }
+    }
+
+    /// Returns `true` if preview mode is globally enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.mode.is_enabled()
+    }
+}
+
+impl Display for LintPreviewConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.mode)?;
+        if !self.enabled_features.is_empty() {
+            write!(f, " (enabled: ")?;
+            for (i, feature) in self.enabled_features.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{feature}")?;
+            }
+            write!(f, ")")?;
+        }
+        if !self.excluded_features.is_empty() {
+            write!(f, " (excluded: ")?;
+            for (i, feature) in self.excluded_features.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{feature}")?;
+            }
+            write!(f, ")")?;
+        }
+        Ok(())
+    }
+}
+
+impl From<PreviewMode> for LintPreviewConfig {
+    fn from(mode: PreviewMode) -> Self {
+        Self {
+            mode,
+            ..Default::default()
         }
     }
 }
@@ -943,8 +1010,80 @@ impl Display for CompiledPerFileTargetVersionList {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use crate::preview::LintPreviewFeature;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
+
     #[test]
     fn default_python_version_works() {
         super::PythonVersion::default();
+    }
+
+    #[test]
+    fn preview_disabled_no_features_enabled() {
+        let config = LintPreviewConfig::default();
+        assert!(!config.is_feature_enabled(LintPreviewFeature::FixBuiltinOpen));
+        assert!(!config.is_enabled());
+    }
+
+    #[test]
+    fn preview_enabled_all_features_active() {
+        let config = LintPreviewConfig::from(PreviewMode::Enabled);
+        assert!(config.is_feature_enabled(LintPreviewFeature::FixBuiltinOpen));
+        assert!(config.is_feature_enabled(LintPreviewFeature::DunderInitFixUnusedImport));
+    }
+
+    #[test]
+    fn preview_disabled_individual_enable() {
+        let config = LintPreviewConfig {
+            mode: PreviewMode::Disabled,
+            enabled_features: BTreeSet::from([LintPreviewFeature::FixBuiltinOpen]),
+            excluded_features: BTreeSet::new(),
+        };
+        assert!(config.is_feature_enabled(LintPreviewFeature::FixBuiltinOpen));
+        assert!(!config.is_feature_enabled(LintPreviewFeature::DunderInitFixUnusedImport));
+        assert!(!config.is_enabled());
+    }
+
+    #[test]
+    fn preview_enabled_individual_exclude() {
+        let config = LintPreviewConfig {
+            mode: PreviewMode::Enabled,
+            enabled_features: BTreeSet::new(),
+            excluded_features: BTreeSet::from([LintPreviewFeature::FixBuiltinOpen]),
+        };
+        assert!(!config.is_feature_enabled(LintPreviewFeature::FixBuiltinOpen));
+        assert!(config.is_feature_enabled(LintPreviewFeature::DunderInitFixUnusedImport));
+        assert!(config.is_enabled());
+    }
+
+    #[test]
+    fn cache_key_deterministic() {
+        use ruff_cache::CacheKeyHasher;
+        use std::hash::Hasher;
+
+        let config1 = LintPreviewConfig {
+            mode: PreviewMode::Disabled,
+            enabled_features: BTreeSet::from([
+                LintPreviewFeature::FixBuiltinOpen,
+                LintPreviewFeature::DunderInitFixUnusedImport,
+            ]),
+            excluded_features: BTreeSet::new(),
+        };
+        let config2 = LintPreviewConfig {
+            mode: PreviewMode::Disabled,
+            enabled_features: BTreeSet::from([
+                LintPreviewFeature::DunderInitFixUnusedImport,
+                LintPreviewFeature::FixBuiltinOpen,
+            ]),
+            excluded_features: BTreeSet::new(),
+        };
+
+        let mut hasher1 = CacheKeyHasher::new();
+        ruff_cache::CacheKey::cache_key(&config1, &mut hasher1);
+        let mut hasher2 = CacheKeyHasher::new();
+        ruff_cache::CacheKey::cache_key(&config2, &mut hasher2);
+        assert_eq!(hasher1.finish(), hasher2.finish());
     }
 }

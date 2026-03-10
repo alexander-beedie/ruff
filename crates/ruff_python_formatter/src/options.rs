@@ -6,6 +6,9 @@ use ruff_formatter::printer::{LineEnding, PrinterOptions, SourceMapGeneration};
 use ruff_formatter::{FormatOptions, IndentStyle, IndentWidth, LineWidth};
 use ruff_macros::CacheKey;
 use ruff_python_ast::{self as ast, PySourceType};
+use std::collections::BTreeSet;
+
+use crate::preview::FormatterPreviewFeature;
 
 /// Resolved options for formatting one individual file. The difference to `FormatterSettings`
 /// is that `FormatterSettings` stores the settings for multiple files (the entire project, a subdirectory, ..)
@@ -61,7 +64,14 @@ pub struct PyFormatOptions {
     docstring_code_line_width: DocstringCodeLineWidth,
 
     /// Whether preview style formatting is enabled or not
-    preview: PreviewMode,
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            deserialize_with = "deserialize_formatter_preview_config",
+            serialize_with = "serialize_formatter_preview_config"
+        )
+    )]
+    preview: FormatterPreviewConfig,
 }
 
 fn default_line_width() -> LineWidth {
@@ -90,7 +100,7 @@ impl Default for PyFormatOptions {
             source_map_generation: SourceMapGeneration::default(),
             docstring_code: DocstringCode::default(),
             docstring_code_line_width: DocstringCodeLineWidth::default(),
-            preview: PreviewMode::default(),
+            preview: FormatterPreviewConfig::default(),
         }
     }
 }
@@ -140,8 +150,8 @@ impl PyFormatOptions {
         self.docstring_code_line_width
     }
 
-    pub const fn preview(&self) -> PreviewMode {
-        self.preview
+    pub fn preview(&self) -> &FormatterPreviewConfig {
+        &self.preview
     }
 
     #[must_use]
@@ -199,8 +209,8 @@ impl PyFormatOptions {
     }
 
     #[must_use]
-    pub fn with_preview(mut self, preview: PreviewMode) -> Self {
-        self.preview = preview;
+    pub fn with_preview(mut self, preview: impl Into<FormatterPreviewConfig>) -> Self {
+        self.preview = preview.into();
         self
     }
 
@@ -352,6 +362,71 @@ impl fmt::Display for PreviewMode {
     }
 }
 
+/// Resolved preview configuration that supports granular feature selection.
+///
+/// When `mode` is `Enabled`, all preview features are active unless listed in `excluded_features`.
+/// When `mode` is `Disabled`, only features listed in `enabled_features` are active.
+///
+/// Note: `LintPreviewConfig` in `ruff_linter` mirrors this structure.
+/// They are separate types because the formatter crate does not depend on the linter crate.
+#[derive(Debug, Clone, Default, CacheKey)]
+pub struct FormatterPreviewConfig {
+    pub mode: PreviewMode,
+    pub enabled_features: BTreeSet<FormatterPreviewFeature>,
+    pub excluded_features: BTreeSet<FormatterPreviewFeature>,
+}
+
+impl FormatterPreviewConfig {
+    /// Returns `true` if the given preview feature is enabled.
+    pub fn is_feature_enabled(&self, feature: FormatterPreviewFeature) -> bool {
+        match self.mode {
+            PreviewMode::Enabled => !self.excluded_features.contains(&feature),
+            PreviewMode::Disabled => self.enabled_features.contains(&feature),
+        }
+    }
+
+    /// Returns `true` if preview mode is globally enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.mode.is_enabled()
+    }
+}
+
+impl fmt::Display for FormatterPreviewConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.mode)?;
+        if !self.enabled_features.is_empty() {
+            write!(f, " (enabled: ")?;
+            for (i, feature) in self.enabled_features.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{feature}")?;
+            }
+            write!(f, ")")?;
+        }
+        if !self.excluded_features.is_empty() {
+            write!(f, " (excluded: ")?;
+            for (i, feature) in self.excluded_features.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{feature}")?;
+            }
+            write!(f, ")")?;
+        }
+        Ok(())
+    }
+}
+
+impl From<PreviewMode> for FormatterPreviewConfig {
+    fn from(mode: PreviewMode) -> Self {
+        Self {
+            mode,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default, CacheKey)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
@@ -463,5 +538,156 @@ where
             serde::de::Unexpected::Str(s),
             &"dynamic",
         )),
+    }
+}
+
+/// Deserializes a `FormatterPreviewConfig` from either a `PreviewMode` string
+/// (e.g. `"enabled"` or `"disabled"`) or a full struct with `mode`, `enabled_features`,
+/// and `excluded_features` fields.
+///
+/// Note: The linter uses a different deserialization path (`PreviewOption` →
+/// `PreviewConfiguration` → `LintPreviewConfig`) defined in `ruff_workspace`. These are
+/// separate because `PyFormatOptions` is deserialized directly (e.g. in tests, WASM),
+/// while linter preview config flows through the workspace configuration layer.
+#[cfg(feature = "serde")]
+fn deserialize_formatter_preview_config<'de, D>(d: D) -> Result<FormatterPreviewConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+
+    // Try to deserialize as just a PreviewMode string first, fall back to struct.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PreviewConfigHelper {
+        Mode(PreviewMode),
+        Config {
+            #[serde(default)]
+            mode: PreviewMode,
+            #[serde(default)]
+            enabled_features: BTreeSet<FormatterPreviewFeature>,
+            #[serde(default)]
+            excluded_features: BTreeSet<FormatterPreviewFeature>,
+        },
+    }
+
+    match PreviewConfigHelper::deserialize(d)? {
+        PreviewConfigHelper::Mode(mode) => Ok(FormatterPreviewConfig::from(mode)),
+        PreviewConfigHelper::Config {
+            mode,
+            enabled_features,
+            excluded_features,
+        } => Ok(FormatterPreviewConfig {
+            mode,
+            enabled_features,
+            excluded_features,
+        }),
+    }
+}
+
+/// Serializes a `FormatterPreviewConfig` as just a `PreviewMode` string when
+/// features are empty, or as a full struct otherwise.
+#[cfg(feature = "serde")]
+fn serialize_formatter_preview_config<S>(
+    config: &FormatterPreviewConfig,
+    s: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::Serialize;
+
+    if config.enabled_features.is_empty() && config.excluded_features.is_empty() {
+        config.mode.serialize(s)
+    } else {
+        use serde::ser::SerializeStruct;
+        let mut state = s.serialize_struct("FormatterPreviewConfig", 3)?;
+        state.serialize_field("mode", &config.mode)?;
+        state.serialize_field("enabled_features", &config.enabled_features)?;
+        state.serialize_field("excluded_features", &config.excluded_features)?;
+        state.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::FormatterPreviewConfig;
+    use crate::options::PreviewMode;
+    use crate::preview::FormatterPreviewFeature;
+
+    #[test]
+    fn formatter_preview_disabled_no_features_enabled() {
+        let config = FormatterPreviewConfig::default();
+        assert!(
+            !config
+                .is_feature_enabled(FormatterPreviewFeature::HugParensWithBracesAndSquareBrackets)
+        );
+        assert!(!config.is_enabled());
+    }
+
+    #[test]
+    fn formatter_preview_enabled_all_features_active() {
+        let config = FormatterPreviewConfig::from(PreviewMode::Enabled);
+        assert!(
+            config
+                .is_feature_enabled(FormatterPreviewFeature::HugParensWithBracesAndSquareBrackets)
+        );
+        assert!(config.is_feature_enabled(FormatterPreviewFeature::FluentLayoutSplitFirstCall));
+    }
+
+    #[test]
+    fn formatter_preview_disabled_individual_enable() {
+        let config = FormatterPreviewConfig {
+            mode: PreviewMode::Disabled,
+            enabled_features: BTreeSet::from([
+                FormatterPreviewFeature::HugParensWithBracesAndSquareBrackets,
+            ]),
+            excluded_features: BTreeSet::new(),
+        };
+        assert!(
+            config
+                .is_feature_enabled(FormatterPreviewFeature::HugParensWithBracesAndSquareBrackets)
+        );
+        assert!(!config.is_feature_enabled(FormatterPreviewFeature::FluentLayoutSplitFirstCall));
+        assert!(!config.is_enabled());
+    }
+
+    #[test]
+    fn formatter_preview_enabled_individual_exclude() {
+        let config = FormatterPreviewConfig {
+            mode: PreviewMode::Enabled,
+            enabled_features: BTreeSet::new(),
+            excluded_features: BTreeSet::from([
+                FormatterPreviewFeature::HugParensWithBracesAndSquareBrackets,
+            ]),
+        };
+        assert!(
+            !config
+                .is_feature_enabled(FormatterPreviewFeature::HugParensWithBracesAndSquareBrackets)
+        );
+        assert!(config.is_feature_enabled(FormatterPreviewFeature::FluentLayoutSplitFirstCall));
+        assert!(config.is_enabled());
+    }
+
+    #[test]
+    fn formatter_preview_config_display_plain() {
+        let config = FormatterPreviewConfig::from(PreviewMode::Disabled);
+        assert_eq!(config.to_string(), "disabled");
+    }
+
+    #[test]
+    fn formatter_preview_config_display_with_features() {
+        let config = FormatterPreviewConfig {
+            mode: PreviewMode::Disabled,
+            enabled_features: BTreeSet::from([
+                FormatterPreviewFeature::HugParensWithBracesAndSquareBrackets,
+            ]),
+            excluded_features: BTreeSet::new(),
+        };
+        let display = config.to_string();
+        assert!(display.contains("enabled:"));
+        assert!(display.contains("hug-parens-with-braces-and-square-brackets"));
     }
 }

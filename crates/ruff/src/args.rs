@@ -284,6 +284,12 @@ pub struct CheckCommand {
     preview: bool,
     #[clap(long, overrides_with("preview"), hide = true)]
     no_preview: bool,
+    /// Enable specific preview features by name.
+    #[arg(long, value_delimiter = ',', value_name = "FEATURE")]
+    preview_enable: Option<Vec<String>>,
+    /// Exclude specific preview features by name (requires --preview).
+    #[arg(long, value_delimiter = ',', value_name = "FEATURE")]
+    preview_exclude: Option<Vec<String>>,
     /// Comma-separated list of rule codes to enable (or ALL, to enable all rules).
     #[arg(
         long,
@@ -566,6 +572,12 @@ pub struct FormatCommand {
     preview: bool,
     #[clap(long, overrides_with("preview"), hide = true)]
     no_preview: bool,
+    /// Enable specific preview features by name.
+    #[arg(long, value_delimiter = ',', value_name = "FEATURE")]
+    preview_enable: Option<Vec<String>>,
+    /// Exclude specific preview features by name (requires --preview).
+    #[arg(long, value_delimiter = ',', value_name = "FEATURE")]
+    preview_exclude: Option<Vec<String>>,
 
     /// When specified, Ruff will try to only format the code in the given range.
     /// It might be necessary to extend the start backwards or the end forwards, to fully enclose a logical line.
@@ -792,6 +804,8 @@ impl CheckCommand {
             line_length: self.line_length,
             per_file_ignores: self.per_file_ignores,
             preview: resolve_bool_arg(self.preview, self.no_preview).map(PreviewMode::from),
+            preview_enable: self.preview_enable,
+            preview_exclude: self.preview_exclude,
             respect_gitignore: resolve_bool_arg(self.respect_gitignore, self.no_respect_gitignore),
             select: self.select,
             target_version: self.target_version.map(ast::PythonVersion::from),
@@ -836,6 +850,8 @@ impl FormatCommand {
             respect_gitignore: resolve_bool_arg(self.respect_gitignore, self.no_respect_gitignore),
             exclude: self.exclude,
             preview: resolve_bool_arg(self.preview, self.no_preview).map(PreviewMode::from),
+            preview_enable: self.preview_enable,
+            preview_exclude: self.preview_exclude,
             force_exclude: resolve_bool_arg(self.force_exclude, self.no_force_exclude),
             target_version: self.target_version.map(ast::PythonVersion::from),
             cache_dir: self.cache_dir,
@@ -1356,6 +1372,8 @@ struct ExplicitConfigOverrides {
     per_file_ignores: Option<Vec<PatternPrefixPair>>,
     extend_per_file_ignores: Option<Vec<PatternPrefixPair>>,
     preview: Option<PreviewMode>,
+    preview_enable: Option<Vec<String>>,
+    preview_exclude: Option<Vec<String>>,
     respect_gitignore: Option<bool>,
     select: Option<Vec<RuleSelector>>,
     target_version: Option<ast::PythonVersion>,
@@ -1440,6 +1458,20 @@ impl ConfigurationTransformer for ExplicitConfigOverrides {
             config.preview = Some(*preview);
             config.lint.preview = Some(*preview);
             config.format.preview = Some(*preview);
+        }
+        // Feature names are subsystem-specific (lint and formatter have separate feature
+        // enums). CLI flags broadcast to all subsystems; each subsystem silently ignores
+        // names it doesn't recognize. We propagate to global, lint, and format configs so
+        // that a single `--preview-enable` flag covers both linter and formatter features.
+        if let Some(enable) = &self.preview_enable {
+            config.preview_config.enable.clone_from(enable);
+            config.lint.preview_config.enable.clone_from(enable);
+            config.format.preview_config.enable.clone_from(enable);
+        }
+        if let Some(exclude) = &self.preview_exclude {
+            config.preview_config.exclude.clone_from(exclude);
+            config.lint.preview_config.exclude.clone_from(exclude);
+            config.format.preview_config.exclude.clone_from(exclude);
         }
         if let Some(per_file_ignores) = &self.per_file_ignores {
             config.lint.per_file_ignores = Some(collect_per_file_ignores(per_file_ignores.clone()));

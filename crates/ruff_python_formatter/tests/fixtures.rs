@@ -579,7 +579,7 @@ source_type                = {source_type:?}"#,
             magic_trailing_comma = self.0.magic_trailing_comma(),
             docstring_code = self.0.docstring_code(),
             docstring_code_line_width = self.0.docstring_code_line_width(),
-            preview = self.0.preview(),
+            preview = self.0.preview().mode,
             target_version = self.0.target_version(),
             source_type = self.0.source_type()
         )

@@ -22,7 +22,9 @@ use crate::rules::{
     flake8_self, flake8_tidy_imports, flake8_type_checking, flake8_unused_arguments, isort, mccabe,
     pep8_naming, pycodestyle, pydoclint, pydocstyle, pyflakes, pylint, pyupgrade, ruff,
 };
-use crate::settings::types::{CompiledPerFileIgnoreList, ExtensionMapping, FilePatternSet};
+use crate::settings::types::{
+    CompiledPerFileIgnoreList, ExtensionMapping, FilePatternSet, LintPreviewConfig,
+};
 use crate::{RuleSelector, codes, fs};
 
 use super::line_width::IndentWidth;
@@ -235,7 +237,7 @@ pub struct LinterSettings {
     /// [`Path`] against these patterns, while falling back to `unresolved_target_version` if none
     /// of them match.
     pub per_file_target_version: CompiledPerFileTargetVersionList,
-    pub preview: PreviewMode,
+    pub preview: LintPreviewConfig,
     pub explicit_preview_rules: bool,
 
     // Rule-specific settings
@@ -867,7 +869,7 @@ impl LinterSettings {
             pylint: pylint::settings::Settings::default(),
             pyupgrade: pyupgrade::settings::Settings::default(),
             ruff: ruff::settings::Settings::default(),
-            preview: PreviewMode::default(),
+            preview: LintPreviewConfig::default(),
             explicit_preview_rules: false,
             extension: ExtensionMapping::default(),
             typing_extensions: true,
@@ -883,7 +885,7 @@ impl LinterSettings {
 
     #[must_use]
     pub fn with_preview_mode(mut self) -> Self {
-        self.preview = PreviewMode::Enabled;
+        self.preview = LintPreviewConfig::from(PreviewMode::Enabled);
         self
     }
 

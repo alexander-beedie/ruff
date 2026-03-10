@@ -599,10 +599,14 @@
       }
     },
     "preview": {
-      "description": "Whether to enable preview mode. When preview mode is enabled, Ruff will\nuse unstable rules, fixes, and formatting.",
-      "type": [
-        "boolean",
-        "null"
+      "description": "Whether to enable preview mode. When preview mode is enabled, Ruff will\nuse unstable rules, fixes, and formatting.\n\nAccepts a boolean or a structured object for granular control:\n```toml\n# Enable all preview features.\npreview = true\n\n# Or use granular selection:\n[preview]\nmode = false\nenable = [\"feature1\"]\n```",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PreviewOption"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "pycodestyle": {
@@ -821,9 +825,13 @@
         },
         "preview": {
           "description": "Whether to enable preview mode. When preview mode is enabled, Ruff will expose unstable\ncommands.",
-          "type": [
-            "boolean",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PreviewOption"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "string-imports-min-dots": {
@@ -1615,9 +1623,13 @@
         },
         "preview": {
           "description": "Whether to enable the unstable preview style formatting.",
-          "type": [
-            "boolean",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PreviewOption"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "quote-style": {
@@ -2508,9 +2520,13 @@
         },
         "preview": {
           "description": "Whether to enable preview mode. When preview mode is enabled, Ruff will\nuse unstable rules and fixes.",
-          "type": [
-            "boolean",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PreviewOption"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "pycodestyle": {
@@ -2744,6 +2760,44 @@
         }
       },
       "additionalProperties": false
+    },
+    "PreviewOption": {
+      "description": "Preview mode configuration. Accepts either a boolean or a structured object\nfor granular control over individual preview features.",
+      "anyOf": [
+        {
+          "description": "Enable or disable all preview features.",
+          "type": "boolean"
+        },
+        {
+          "description": "Granular preview feature selection.",
+          "type": "object",
+          "properties": {
+            "enable": {
+              "description": "List of individual preview features to enable (when `mode` is `false` or omitted).",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "exclude": {
+              "description": "List of individual preview features to exclude (when `mode` is `true`).",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "mode": {
+              "description": "Whether to enable preview mode globally. Defaults to `false`.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
     },
     "PyUpgradeOptions": {
       "description": "Options for the `pyupgrade` plugin.",

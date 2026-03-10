@@ -9,7 +9,7 @@ use ruff_macros::CacheKey;
 
 use crate::display_settings;
 use crate::preview::is_expanded_import_conventions_enabled;
-use crate::settings::types::PreviewMode;
+use crate::settings::types::LintPreviewConfig;
 
 const CONVENTIONAL_ALIASES: &[(&str, &str)] = &[
     ("altair", "alt"),
@@ -71,7 +71,7 @@ pub struct Settings {
     pub banned_from: FxHashSet<String>,
 }
 
-pub fn default_aliases(preview: PreviewMode) -> FxHashMap<String, String> {
+pub fn default_aliases(preview: &LintPreviewConfig) -> FxHashMap<String, String> {
     let mut aliases = CONVENTIONAL_ALIASES
         .iter()
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
@@ -88,7 +88,7 @@ pub fn default_aliases(preview: PreviewMode) -> FxHashMap<String, String> {
     aliases
 }
 
-pub fn default_banned_aliases(preview: PreviewMode) -> FxHashMap<String, BannedAliases> {
+pub fn default_banned_aliases(preview: &LintPreviewConfig) -> FxHashMap<String, BannedAliases> {
     if is_expanded_import_conventions_enabled(preview) {
         FxHashMap::from_iter([(
             "geopandas".to_string(),
@@ -100,7 +100,7 @@ pub fn default_banned_aliases(preview: PreviewMode) -> FxHashMap<String, BannedA
 }
 
 impl Settings {
-    pub fn new(preview: PreviewMode) -> Self {
+    pub fn new(preview: &LintPreviewConfig) -> Self {
         Self {
             aliases: default_aliases(preview),
             banned_aliases: default_banned_aliases(preview),
@@ -111,9 +111,10 @@ impl Settings {
 
 impl Default for Settings {
     fn default() -> Self {
+        let preview = LintPreviewConfig::default();
         Self {
-            aliases: default_aliases(PreviewMode::Disabled),
-            banned_aliases: default_banned_aliases(PreviewMode::Disabled),
+            aliases: default_aliases(&preview),
+            banned_aliases: default_banned_aliases(&preview),
             banned_from: FxHashSet::default(),
         }
     }

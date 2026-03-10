@@ -21,7 +21,9 @@ mod tests {
     use crate::registry::Rule;
     use crate::rules::pydocstyle::settings::Settings as PydocstyleSettings;
     use crate::settings::LinterSettings;
-    use crate::settings::types::{CompiledPerFileIgnoreList, PerFileIgnore, PreviewMode};
+    use crate::settings::types::{
+        CompiledPerFileIgnoreList, LintPreviewConfig, PerFileIgnore, PreviewMode,
+    };
     use crate::test::{test_path, test_resource_path, test_snippet};
     use crate::{assert_diagnostics, assert_diagnostics_diff, settings};
 
@@ -350,7 +352,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("ruff/confusables.py"),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 allowed_confusables: FxHashSet::from_iter(['−', 'ρ', '∗']),
                 ..settings::LinterSettings::for_rules(vec![
                     Rule::AmbiguousUnicodeCharacterString,
@@ -539,7 +541,7 @@ mod tests {
             path,
             &settings::LinterSettings {
                 external: vec!["V".to_string()],
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rule(Rule::InvalidRuleCode)
             },
         )?;
@@ -677,7 +679,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("ruff").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
         )?;
@@ -695,7 +697,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("ruff").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 unresolved_target_version: PythonVersion::PY37.into(),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
@@ -714,7 +716,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("ruff").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 unresolved_target_version: PythonVersion::PY38.into(),
                 ..settings::LinterSettings::for_rule(rule_code)
             },

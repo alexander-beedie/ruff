@@ -9,7 +9,7 @@ mod tests {
     use test_case::test_case;
 
     use crate::registry::Rule;
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::test_path;
     use crate::{assert_diagnostics, assert_diagnostics_diff, settings};
 
@@ -35,11 +35,10 @@ mod tests {
             snapshot,
             Path::new("flake8_blind_except").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Disabled,
                 ..settings::LinterSettings::for_rule(rule_code)
             },
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
         );

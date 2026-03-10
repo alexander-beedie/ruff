@@ -17,7 +17,7 @@ mod tests {
     use crate::rules::{flake8_tidy_imports, pylint};
 
     use crate::settings::LinterSettings;
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::test_path;
     use crate::{assert_diagnostics, assert_diagnostics_diff};
 
@@ -272,11 +272,10 @@ mod tests {
             snapshot,
             Path::new("pylint").join(path).as_path(),
             &LinterSettings {
-                preview: PreviewMode::Disabled,
                 ..LinterSettings::for_rule(rule_code)
             },
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..LinterSettings::for_rule(rule_code)
             }
         );
@@ -456,7 +455,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("pylint/import_outside_top_level_with_banned.py"),
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 flake8_tidy_imports: flake8_tidy_imports::settings::Settings {
                     banned_module_level_imports: vec![
                         "foo_banned".to_string(),

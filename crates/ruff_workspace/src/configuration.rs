@@ -3,7 +3,7 @@
 //! the various parameters.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env::VarError;
 use std::num::{NonZeroU8, NonZeroU16};
 use std::path::{Path, PathBuf};
@@ -22,6 +22,7 @@ use ruff_cache::cache_dir;
 use ruff_formatter::IndentStyle;
 use ruff_graph::{AnalyzeSettings, Direction, StringImports};
 use ruff_linter::line_width::{IndentWidth, LineLength};
+use ruff_linter::preview::LintPreviewFeature;
 use ruff_linter::registry::{INCOMPATIBLE_CODES, Rule, RuleNamespace, RuleSet};
 use ruff_linter::rule_selector::{PreviewOptions, Specificity};
 use ruff_linter::rules::{flake8_import_conventions, isort, pycodestyle};
@@ -29,8 +30,8 @@ use ruff_linter::settings::fix_safety_table::FixSafetyTable;
 use ruff_linter::settings::rule_table::RuleTable;
 use ruff_linter::settings::types::{
     CompiledPerFileIgnoreList, CompiledPerFileTargetVersionList, ExtensionMapping, FilePattern,
-    FilePatternSet, GlobPath, OutputFormat, PerFileIgnore, PerFileTargetVersion, PreviewMode,
-    RequiredVersion, UnsafeFixes,
+    FilePatternSet, GlobPath, LintPreviewConfig, OutputFormat, PerFileIgnore, PerFileTargetVersion,
+    PreviewMode, RequiredVersion, UnsafeFixes,
 };
 use ruff_linter::settings::{
     DEFAULT_SELECTORS, DUMMY_VARIABLE_RGX, LinterSettings, PREVIEW_DEFAULT_SELECTORS, TASK_TAGS,
@@ -41,7 +42,7 @@ use ruff_linter::{
 };
 use ruff_python_ast as ast;
 use ruff_python_formatter::{
-    DocstringCode, DocstringCodeLineWidth, MagicTrailingComma, QuoteStyle,
+    DocstringCode, DocstringCodeLineWidth, FormatterPreviewConfig, MagicTrailingComma, QuoteStyle,
 };
 
 use crate::options::{
@@ -51,15 +52,14 @@ use crate::options::{
     Flake8ImplicitStrConcatOptions, Flake8ImportConventionsOptions, Flake8PytestStyleOptions,
     Flake8QuotesOptions, Flake8SelfOptions, Flake8TidyImportsOptions, Flake8TypeCheckingOptions,
     Flake8UnusedArgumentsOptions, FormatOptions, IsortOptions, LintCommonOptions, LintOptions,
-    McCabeOptions, Options, Pep8NamingOptions, PyUpgradeOptions, PycodestyleOptions,
+    McCabeOptions, Options, Pep8NamingOptions, PreviewOption, PyUpgradeOptions, PycodestyleOptions,
     PydoclintOptions, PydocstyleOptions, PyflakesOptions, PylintOptions, RuffOptions,
     validate_required_version,
 };
 use crate::pyproject;
 use crate::resolver::ConfigurationOrigin;
 use crate::settings::{
-    EXCLUDE, FileResolverSettings, FormatterSettings, INCLUDE, INCLUDE_PREVIEW, LineEnding,
-    Settings,
+    EXCLUDE, FileResolverSettings, FormatterSettings, INCLUDE, LineEnding, Settings,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -117,6 +117,52 @@ impl RuleSelection {
     }
 }
 
+/// Parsed (but not yet resolved) preview configuration from TOML.
+#[derive(Clone, Debug, Default)]
+pub struct PreviewConfiguration {
+    pub mode: Option<PreviewMode>,
+    pub enable: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+impl PreviewConfiguration {
+    /// Returns `true` if this configuration contains any preview settings.
+    fn is_set(&self) -> bool {
+        self.mode.is_some() || !self.enable.is_empty() || !self.exclude.is_empty()
+    }
+
+    /// Merge two preview configurations. The child (self) takes precedence
+    /// if it has any preview-related settings. This is all-or-nothing: if the child
+    /// sets *any* preview option (mode, enable, or exclude), the entire parent preview
+    /// config is replaced rather than merged. This matches the override semantics of
+    /// other non-list config options (e.g., `target-version`).
+    #[must_use]
+    fn combine(self, parent: Self) -> Self {
+        if self.is_set() { self } else { parent }
+    }
+}
+
+impl From<PreviewOption> for PreviewConfiguration {
+    fn from(option: PreviewOption) -> Self {
+        match option {
+            PreviewOption::Bool(enabled) => PreviewConfiguration {
+                mode: Some(PreviewMode::from(enabled)),
+                enable: Vec::new(),
+                exclude: Vec::new(),
+            },
+            PreviewOption::Granular {
+                mode,
+                enable,
+                exclude,
+            } => PreviewConfiguration {
+                mode: mode.map(PreviewMode::from),
+                enable,
+                exclude,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Configuration {
     // Global options
@@ -127,6 +173,7 @@ pub struct Configuration {
     pub unsafe_fixes: Option<UnsafeFixes>,
     pub output_format: Option<OutputFormat>,
     pub preview: Option<PreviewMode>,
+    pub preview_config: PreviewConfiguration,
     pub required_version: Option<RequiredVersion>,
     pub extension: Option<ExtensionMapping>,
     pub show_fixes: Option<bool>,
@@ -169,10 +216,37 @@ impl Configuration {
         let format_defaults = FormatterSettings::default();
 
         let quote_style = format.quote_style.unwrap_or(format_defaults.quote_style);
-        let format_preview = match format.preview.unwrap_or(global_preview) {
+        let format_preview_mode = match format.preview.unwrap_or(global_preview) {
             PreviewMode::Disabled => ruff_python_formatter::PreviewMode::Disabled,
             PreviewMode::Enabled => ruff_python_formatter::PreviewMode::Enabled,
         };
+
+        // Suppress warnings for unrecognized formatter features because CLI flags
+        // broadcast feature names to all subsystems, so lint feature names are expected
+        // here and should not produce spurious warnings.
+        let format_enabled_features =
+            parse_preview_features(&format.preview_config.enable, "enable", "formatter", false);
+        let format_excluded_features = parse_preview_features(
+            &format.preview_config.exclude,
+            "exclude",
+            "formatter",
+            false,
+        );
+
+        let format_preview_config = FormatterPreviewConfig {
+            mode: format_preview_mode,
+            enabled_features: format_enabled_features,
+            excluded_features: format_excluded_features,
+        };
+
+        warn_preview_config_conflicts(
+            format_preview_config.mode.is_enabled(),
+            !format_preview_config.enabled_features.is_empty(),
+            !format_preview_config.excluded_features.is_empty(),
+            "Formatter",
+            &format.preview_config.enable,
+            &format.preview_config.exclude,
+        );
 
         let per_file_target_version = CompiledPerFileTargetVersionList::resolve(
             self.per_file_target_version.unwrap_or_default(),
@@ -182,7 +256,7 @@ impl Configuration {
         let formatter = FormatterSettings {
             exclude: FilePatternSet::try_from_iter(format.exclude.unwrap_or_default())?,
             extension: self.extension.clone().unwrap_or_default(),
-            preview: format_preview,
+            preview: format_preview_config,
             unresolved_target_version: target_version,
             per_file_target_version: per_file_target_version.clone(),
             line_width: self
@@ -237,6 +311,43 @@ impl Configuration {
         let lint = self.lint;
         let lint_preview = lint.preview.unwrap_or(global_preview);
 
+        let enabled_features =
+            parse_preview_features(&lint.preview_config.enable, "enable", "lint", true);
+        let excluded_features =
+            parse_preview_features(&lint.preview_config.exclude, "exclude", "lint", true);
+
+        let lint_preview_config = LintPreviewConfig {
+            mode: lint_preview,
+            enabled_features,
+            excluded_features,
+        };
+
+        warn_preview_config_conflicts(
+            lint_preview_config.mode.is_enabled(),
+            !lint_preview_config.enabled_features.is_empty(),
+            !lint_preview_config.excluded_features.is_empty(),
+            "Lint",
+            &lint.preview_config.enable,
+            &lint.preview_config.exclude,
+        );
+
+        // Build global preview config for file inclusion features
+        let global_preview_config = LintPreviewConfig {
+            mode: global_preview,
+            enabled_features: parse_preview_features(
+                &self.preview_config.enable,
+                "enable",
+                "lint",
+                true,
+            ),
+            excluded_features: parse_preview_features(
+                &self.preview_config.exclude,
+                "exclude",
+                "lint",
+                true,
+            ),
+        };
+
         let line_length = self.line_length.unwrap_or_default();
 
         let rules = lint.as_rule_table(lint_preview)?;
@@ -249,10 +360,12 @@ impl Configuration {
             .unwrap_or_default();
         let flake8_import_conventions = lint
             .flake8_import_conventions
-            .map(|options| options.try_into_settings(lint_preview))
+            .map(|options| options.try_into_settings(&lint_preview_config))
             .transpose()?
             .unwrap_or_else(|| {
-                ruff_linter::rules::flake8_import_conventions::settings::Settings::new(lint_preview)
+                ruff_linter::rules::flake8_import_conventions::settings::Settings::new(
+                    &lint_preview_config,
+                )
             });
 
         conflicting_import_settings(&isort, &flake8_import_conventions)?;
@@ -278,23 +391,32 @@ impl Configuration {
                 extend_exclude: FilePatternSet::try_from_iter(self.extend_exclude)?,
                 extend_include: FilePatternSet::try_from_iter(self.extend_include)?,
                 force_exclude: self.force_exclude.unwrap_or(false),
-                include: match global_preview {
-                    PreviewMode::Disabled => FilePatternSet::try_from_iter(
-                        self.include.unwrap_or_else(|| INCLUDE.to_vec()),
-                    )?,
-                    PreviewMode::Enabled => {
-                        FilePatternSet::try_from_iter(self.include.unwrap_or_else(|| {
-                            let mut patterns = INCLUDE_PREVIEW.to_vec();
-                            if let Some(extension_map) = &self.extension {
-                                patterns.extend(
-                                    extension_map
-                                        .extensions()
-                                        .map(|ext| FilePattern::Config(format!("*.{ext}"))),
-                                );
-                            }
-                            patterns
-                        }))?
+                include: if let Some(include) = self.include {
+                    FilePatternSet::try_from_iter(include)?
+                } else {
+                    let mut patterns = INCLUDE.to_vec();
+
+                    if global_preview_config.is_feature_enabled(LintPreviewFeature::IncludePywFiles)
+                    {
+                        patterns.push(FilePattern::Builtin("*.pyw"));
                     }
+                    if global_preview_config
+                        .is_feature_enabled(LintPreviewFeature::IncludeMarkdownFiles)
+                    {
+                        patterns.push(FilePattern::Builtin("*.md"));
+                    }
+
+                    if let PreviewMode::Enabled = global_preview {
+                        if let Some(extension_map) = &self.extension {
+                            patterns.extend(
+                                extension_map
+                                    .extensions()
+                                    .map(|ext| FilePattern::Config(format!("*.{ext}"))),
+                            );
+                        }
+                    }
+
+                    FilePatternSet::try_from_iter(patterns)?
                 },
                 respect_gitignore: self.respect_gitignore.unwrap_or(true),
                 project_root: project_root.to_path_buf(),
@@ -304,7 +426,7 @@ impl Configuration {
                 rules,
                 exclude: FilePatternSet::try_from_iter(lint.exclude.unwrap_or_default())?,
                 extension: self.extension.unwrap_or_default(),
-                preview: lint_preview,
+                preview: lint_preview_config,
                 unresolved_target_version: linter_target_version,
                 per_file_target_version,
                 project_root: project_root.to_path_buf(),
@@ -333,7 +455,7 @@ impl Configuration {
                     &lint.extend_unsafe_fixes,
                     &PreviewOptions {
                         mode: lint_preview,
-                        require_explicit: false,
+                        ..PreviewOptions::default()
                     },
                 ),
                 src: self
@@ -558,7 +680,11 @@ impl Configuration {
                 .namespace_packages
                 .map(|namespace_package| resolve_src(&namespace_package, project_root))
                 .transpose()?,
-            preview: options.preview.map(PreviewMode::from),
+            preview: options.preview.as_ref().map(PreviewOption::mode),
+            preview_config: options
+                .preview
+                .map(PreviewConfiguration::from)
+                .unwrap_or_default(),
             required_version: options.required_version,
             respect_gitignore: options.respect_gitignore,
             show_fixes: options.show_fixes,
@@ -627,6 +753,7 @@ impl Configuration {
                 .per_file_target_version
                 .or(config.per_file_target_version),
             preview: self.preview.or(config.preview),
+            preview_config: self.preview_config.combine(config.preview_config),
             extension: self.extension.or(config.extension),
 
             lint: self.lint.combine(config.lint),
@@ -667,6 +794,7 @@ impl Configuration {
 pub struct LintConfiguration {
     pub exclude: Option<Vec<FilePattern>>,
     pub preview: Option<PreviewMode>,
+    pub preview_config: PreviewConfiguration,
 
     // Rule selection
     pub extend_per_file_ignores: Vec<PerFileIgnore>,
@@ -758,7 +886,11 @@ impl LintConfiguration {
                     })
                     .collect()
             }),
-            preview: options.preview.map(PreviewMode::from),
+            preview: options.preview.as_ref().map(PreviewOption::mode),
+            preview_config: options
+                .preview
+                .map(PreviewConfiguration::from)
+                .unwrap_or_default(),
 
             rule_selections: vec![RuleSelection {
                 select: options.common.select,
@@ -1181,6 +1313,7 @@ impl LintConfiguration {
         Self {
             exclude: self.exclude.or(config.exclude),
             preview: self.preview.or(config.preview),
+            preview_config: self.preview_config.combine(config.preview_config),
             rule_selections,
             extend_safe_fixes,
             extend_unsafe_fixes,
@@ -1247,6 +1380,7 @@ impl LintConfiguration {
 pub struct FormatConfiguration {
     pub exclude: Option<Vec<FilePattern>>,
     pub preview: Option<PreviewMode>,
+    pub preview_config: PreviewConfiguration,
     pub extension: Option<ExtensionMapping>,
 
     pub indent_style: Option<IndentStyle>,
@@ -1272,7 +1406,11 @@ impl FormatConfiguration {
                     })
                     .collect()
             }),
-            preview: options.preview.map(PreviewMode::from),
+            preview: options.preview.as_ref().map(PreviewOption::mode),
+            preview_config: options
+                .preview
+                .map(PreviewConfiguration::from)
+                .unwrap_or_default(),
             indent_style: options.indent_style,
             quote_style: options.quote_style,
             magic_trailing_comma: options.skip_magic_trailing_comma.map(|skip| {
@@ -1299,6 +1437,7 @@ impl FormatConfiguration {
         Self {
             exclude: self.exclude.or(config.exclude),
             preview: self.preview.or(config.preview),
+            preview_config: self.preview_config.combine(config.preview_config),
             extension: self.extension.or(config.extension),
             indent_style: self.indent_style.or(config.indent_style),
             quote_style: self.quote_style.or(config.quote_style),
@@ -1336,7 +1475,7 @@ impl AnalyzeConfiguration {
                     })
                     .collect()
             }),
-            preview: options.preview.map(PreviewMode::from),
+            preview: options.preview.as_ref().map(PreviewOption::mode),
             direction: options.direction,
             detect_string_imports: options.detect_string_imports,
             string_imports_min_dots: options.string_imports_min_dots,
@@ -1402,6 +1541,62 @@ pub fn resolve_src(src: &[String], project_root: &Path) -> Result<Vec<PathBuf>> 
         .flatten()
         .collect::<Result<Vec<PathBuf>, GlobError>>()?;
     Ok(paths)
+}
+
+fn parse_preview_features<F>(
+    names: &[String],
+    list_name: &str,
+    kind: &str,
+    warn_unknown: bool,
+) -> BTreeSet<F>
+where
+    F: std::str::FromStr + Ord,
+{
+    let mut features = BTreeSet::new();
+    for name in names {
+        match name.parse::<F>() {
+            Ok(feature) => {
+                features.insert(feature);
+            }
+            Err(_) => {
+                if warn_unknown {
+                    warn_user_once_by_message!(
+                        "Unknown {kind} preview feature `{name}` in `{list_name}` list."
+                    );
+                }
+            }
+        }
+    }
+    features
+}
+
+fn warn_preview_config_conflicts(
+    preview_enabled: bool,
+    has_enabled_features: bool,
+    has_excluded_features: bool,
+    kind: &str,
+    enable_names: &[String],
+    exclude_names: &[String],
+) {
+    if preview_enabled && has_enabled_features {
+        warn_user_once_by_message!(
+            "{} preview feature `enable` has no effect when preview mode is already enabled.",
+            kind
+        );
+    }
+    if !preview_enabled && has_excluded_features {
+        warn_user_once_by_message!(
+            "{} preview feature `exclude` has no effect when preview mode is not enabled.",
+            kind
+        );
+    }
+    for name in enable_names {
+        if exclude_names.contains(name) {
+            warn_user_once_by_message!(
+                "{kind} preview feature `{name}` appears in both `enable` and `exclude`."
+            );
+        }
+    }
 }
 
 fn warn_about_deprecated_top_level_lint_options(
@@ -1733,18 +1928,21 @@ fn conflicting_required_import_pyi025(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::str::FromStr;
 
     use anyhow::Result;
 
     use ruff_linter::RuleSelector;
     use ruff_linter::codes::{Flake8Copyright, Pycodestyle, Refurb};
+    use ruff_linter::preview::LintPreviewFeature;
     use ruff_linter::registry::{Linter, Rule, RuleSet};
     use ruff_linter::rule_selector::PreviewOptions;
     use ruff_linter::settings::types::PreviewMode;
 
+    use super::{PreviewConfiguration, parse_preview_features};
     use crate::configuration::{LintConfiguration, RuleSelection};
-    use crate::options::PydocstyleOptions;
+    use crate::options::{PreviewOption, PydocstyleOptions};
 
     const PREVIEW_RULES: &[Rule] = &[
         Rule::ReimplementedStarmap,
@@ -2232,5 +2430,123 @@ mod tests {
         )?;
 
         Ok(())
+    }
+
+    #[test]
+    fn preview_config_combine_child_with_enable_takes_precedence() {
+        let parent = PreviewConfiguration {
+            mode: Some(PreviewMode::Enabled),
+            enable: vec![],
+            exclude: vec![],
+        };
+        let child = PreviewConfiguration {
+            mode: None,
+            enable: vec!["fix-builtin-open".to_string()],
+            exclude: vec![],
+        };
+        let combined = child.combine(parent);
+        // Child has enable list set, so it takes precedence even without mode
+        assert!(combined.mode.is_none());
+        assert_eq!(combined.enable, vec!["fix-builtin-open".to_string()]);
+    }
+
+    #[test]
+    fn preview_config_combine_empty_child_inherits_parent() {
+        let parent = PreviewConfiguration {
+            mode: Some(PreviewMode::Enabled),
+            enable: vec!["fix-builtin-open".to_string()],
+            exclude: vec![],
+        };
+        let child = PreviewConfiguration::default();
+        let combined = child.combine(parent.clone());
+        assert_eq!(combined.mode, parent.mode);
+        assert_eq!(combined.enable, parent.enable);
+    }
+
+    #[test]
+    fn preview_config_combine_child_with_mode_takes_precedence() {
+        let parent = PreviewConfiguration {
+            mode: Some(PreviewMode::Enabled),
+            enable: vec!["fix-builtin-open".to_string()],
+            exclude: vec![],
+        };
+        let child = PreviewConfiguration {
+            mode: Some(PreviewMode::Disabled),
+            enable: vec![],
+            exclude: vec![],
+        };
+        let combined = child.combine(parent);
+        assert_eq!(combined.mode, Some(PreviewMode::Disabled));
+        assert!(combined.enable.is_empty());
+    }
+
+    #[test]
+    fn preview_config_combine_child_with_exclude_takes_precedence() {
+        let parent = PreviewConfiguration {
+            mode: Some(PreviewMode::Enabled),
+            enable: vec![],
+            exclude: vec![],
+        };
+        let child = PreviewConfiguration {
+            mode: None,
+            enable: vec![],
+            exclude: vec!["fix-builtin-open".to_string()],
+        };
+        let combined = child.combine(parent);
+        assert!(combined.mode.is_none());
+        assert_eq!(combined.exclude, vec!["fix-builtin-open".to_string()]);
+    }
+
+    #[test]
+    fn preview_option_from_bool_to_configuration() {
+        let config = PreviewConfiguration::from(PreviewOption::Bool(true));
+        assert_eq!(config.mode, Some(PreviewMode::Enabled));
+        assert!(config.enable.is_empty());
+        assert!(config.exclude.is_empty());
+    }
+
+    #[test]
+    fn preview_option_from_granular_to_configuration() {
+        let config = PreviewConfiguration::from(PreviewOption::Granular {
+            mode: Some(false),
+            enable: vec!["fix-builtin-open".to_string()],
+            exclude: Vec::new(),
+        });
+        assert_eq!(config.mode, Some(PreviewMode::Disabled));
+        assert_eq!(config.enable, vec!["fix-builtin-open".to_string()]);
+        assert!(config.exclude.is_empty());
+    }
+
+    #[test]
+    fn preview_option_from_granular_defaults() {
+        let config = PreviewConfiguration::from(PreviewOption::Granular {
+            mode: None,
+            enable: Vec::new(),
+            exclude: Vec::new(),
+        });
+        assert!(config.mode.is_none());
+        assert!(config.enable.is_empty());
+        assert!(config.exclude.is_empty());
+    }
+
+    #[test]
+    fn parse_preview_features_valid() {
+        let names = vec!["fix-builtin-open".to_string()];
+        let result: BTreeSet<LintPreviewFeature> =
+            parse_preview_features(&names, "enable", "lint", true);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&LintPreviewFeature::FixBuiltinOpen));
+    }
+
+    #[test]
+    fn parse_preview_features_unknown_ignored() {
+        let names = vec![
+            "fix-builtin-open".to_string(),
+            "totally-bogus-feature".to_string(),
+        ];
+        let result: BTreeSet<LintPreviewFeature> =
+            parse_preview_features(&names, "enable", "lint", true);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&LintPreviewFeature::FixBuiltinOpen));
     }
 }

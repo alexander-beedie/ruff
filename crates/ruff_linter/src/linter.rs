@@ -1039,7 +1039,9 @@ mod tests {
             &LinterSettings {
                 rules: settings::rule_table::RuleTable::empty(),
                 unresolved_target_version: python_version.into(),
-                preview: settings::types::PreviewMode::Enabled,
+                preview: settings::types::LintPreviewConfig::from(
+                    settings::types::PreviewMode::Enabled,
+                ),
                 ..Default::default()
             },
         );
@@ -1062,7 +1064,9 @@ mod tests {
             &LinterSettings {
                 unresolved_target_version: python_version.into(),
                 rules: settings::rule_table::RuleTable::empty(),
-                preview: settings::types::PreviewMode::Enabled,
+                preview: settings::types::LintPreviewConfig::from(
+                    settings::types::PreviewMode::Enabled,
+                ),
                 ..Default::default()
             },
         );

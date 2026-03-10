@@ -17,7 +17,7 @@ mod tests {
     use crate::line_width::LineLength;
     use crate::registry::Rule;
     use crate::rules::{isort, pycodestyle};
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::test_path;
     use crate::{assert_diagnostics, settings};
 
@@ -91,7 +91,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("pycodestyle").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
         )?;

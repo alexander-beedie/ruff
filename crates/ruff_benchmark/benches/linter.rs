@@ -9,7 +9,7 @@ use ruff_benchmark::{
 use ruff_linter::linter::{ParseSource, lint_only};
 use ruff_linter::rule_selector::PreviewOptions;
 use ruff_linter::settings::rule_table::RuleTable;
-use ruff_linter::settings::types::PreviewMode;
+use ruff_linter::settings::types::{LintPreviewConfig, PreviewMode};
 use ruff_linter::settings::{LinterSettings, flags};
 use ruff_linter::source_kind::SourceKind;
 use ruff_linter::{RuleSelector, registry::Rule};
@@ -143,7 +143,7 @@ fn benchmark_preview_rules(criterion: &mut Criterion) {
 
     let settings = LinterSettings {
         rules,
-        preview: PreviewMode::Enabled,
+        preview: LintPreviewConfig::from(PreviewMode::Enabled),
         ..LinterSettings::default()
     };
 

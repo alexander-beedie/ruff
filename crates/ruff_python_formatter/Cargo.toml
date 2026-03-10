@@ -35,6 +35,8 @@ itertools = { workspace = true }
 memchr = { workspace = true }
 regex = { workspace = true }
 rustc-hash = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
 salsa = { workspace = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }

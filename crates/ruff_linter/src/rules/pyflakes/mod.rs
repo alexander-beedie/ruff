@@ -25,7 +25,7 @@ mod tests {
     use crate::registry::{Linter, Rule};
     use crate::rules::isort;
     use crate::rules::pyflakes;
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::settings::{LinterSettings, flags};
     use crate::source_kind::SourceKind;
     use crate::suppression::Suppressions;
@@ -245,7 +245,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("pyflakes").join(path).as_path(),
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..LinterSettings::for_rule(rule_code)
             },
         )?;
@@ -281,7 +281,7 @@ mod tests {
             },
             Path::new("f401_preview_first_party_submodule/__init__.py"),
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 isort: isort::settings::Settings {
                     // This case specifically tests the scenario where
                     // the unused import is a first-party submodule import;
@@ -312,7 +312,7 @@ mod tests {
             path.to_string_lossy()
         );
         let settings = LinterSettings {
-            preview: PreviewMode::Enabled,
+            preview: LintPreviewConfig::from(PreviewMode::Enabled),
             isort: isort::settings::Settings {
                 // Like `f401_preview_first_party_submodule`, this test requires the input module to
                 // be first-party
@@ -442,7 +442,7 @@ mod tests {
             Path::new("pyflakes").join(path).as_path(),
             &LinterSettings::for_rule(rule_code),
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..LinterSettings::for_rule(rule_code)
             }
         );
@@ -583,7 +583,7 @@ mod tests {
             },
             Path::new("f401_preview_submodule.py"),
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..LinterSettings::for_rule(Rule::UnusedImport)
             },
         )

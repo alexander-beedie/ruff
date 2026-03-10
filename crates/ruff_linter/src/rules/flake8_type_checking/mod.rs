@@ -621,7 +621,9 @@ mod tests {
         let diagnostics = test_snippet(
             contents,
             &settings::LinterSettings {
-                preview: settings::types::PreviewMode::Enabled,
+                preview: settings::types::LintPreviewConfig::from(
+                    settings::types::PreviewMode::Enabled,
+                ),
                 ..settings::LinterSettings::for_rules(Linter::Flake8TypeChecking.rules())
             },
         );

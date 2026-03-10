@@ -12,7 +12,7 @@ mod tests {
     use crate::assert_diagnostics;
     use crate::registry::Rule;
     use crate::settings::LinterSettings;
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::test_path;
 
     #[test_case(Rule::UnnecessaryListCast, Path::new("PERF101.py"))]
@@ -44,7 +44,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("perflint").join(path).as_path(),
             &LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 unresolved_target_version: PythonVersion::PY310.into(),
                 ..LinterSettings::for_rule(rule_code)
             },

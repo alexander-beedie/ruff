@@ -11,8 +11,8 @@ use ruff_linter::settings::types::{
 use ruff_macros::CacheKey;
 use ruff_python_ast::{PySourceType, PythonVersion};
 use ruff_python_formatter::{
-    DocstringCode, DocstringCodeLineWidth, MagicTrailingComma, PreviewMode, PyFormatOptions,
-    QuoteStyle,
+    DocstringCode, DocstringCodeLineWidth, FormatterPreviewConfig, MagicTrailingComma,
+    PyFormatOptions, QuoteStyle,
 };
 use ruff_source_file::find_newline;
 use std::fmt;
@@ -144,14 +144,6 @@ pub(crate) static INCLUDE: &[FilePattern] = &[
     FilePattern::Builtin("*.ipynb"),
     FilePattern::Builtin("**/pyproject.toml"),
 ];
-pub(crate) static INCLUDE_PREVIEW: &[FilePattern] = &[
-    FilePattern::Builtin("*.py"),
-    FilePattern::Builtin("*.pyi"),
-    FilePattern::Builtin("*.pyw"),
-    FilePattern::Builtin("*.ipynb"),
-    FilePattern::Builtin("**/pyproject.toml"),
-    FilePattern::Builtin("*.md"),
-];
 
 impl FileResolverSettings {
     fn new(project_root: &Path) -> Self {
@@ -171,7 +163,7 @@ impl FileResolverSettings {
 pub struct FormatterSettings {
     pub exclude: FilePatternSet,
     pub extension: ExtensionMapping,
-    pub preview: PreviewMode,
+    pub preview: FormatterPreviewConfig,
     /// The non-path-resolved Python version specified by the `target-version` input option.
     ///
     /// See [`FormatterSettings::resolve_target_version`] for a way to obtain the Python version for
@@ -237,7 +229,7 @@ impl FormatterSettings {
             .with_indent_width(self.indent_width)
             .with_quote_style(self.quote_style)
             .with_magic_trailing_comma(self.magic_trailing_comma)
-            .with_preview(self.preview)
+            .with_preview(self.preview.clone())
             .with_line_ending(line_ending)
             .with_line_width(self.line_width)
             .with_docstring_code(self.docstring_code_format)
@@ -265,7 +257,7 @@ impl Default for FormatterSettings {
             extension: ExtensionMapping::default(),
             unresolved_target_version: default_options.target_version(),
             per_file_target_version: CompiledPerFileTargetVersionList::default(),
-            preview: PreviewMode::Disabled,
+            preview: FormatterPreviewConfig::default(),
             line_width: default_options.line_width(),
             line_ending: LineEnding::Auto,
             indent_style: default_options.indent_style(),

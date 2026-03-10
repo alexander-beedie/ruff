@@ -24,7 +24,9 @@ use ruff_source_file::{OneIndexed, PositionEncoding as SourcePositionEncoding, S
 use ruff_text_size::Ranged;
 use ruff_workspace::Settings;
 use ruff_workspace::configuration::Configuration;
-use ruff_workspace::options::{FormatOptions, LintCommonOptions, LintOptions, Options};
+use ruff_workspace::options::{
+    FormatOptions, LintCommonOptions, LintOptions, Options, PreviewOption,
+};
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
@@ -174,7 +176,7 @@ impl Workspace {
     #[wasm_bindgen(js_name = defaultSettings)]
     pub fn default_settings() -> Result<JsValue, Error> {
         serde_wasm_bindgen::to_value(&Options {
-            preview: Some(false),
+            preview: Some(PreviewOption::Bool(false)),
 
             // Propagate defaults.
             builtins: Some(Vec::default()),

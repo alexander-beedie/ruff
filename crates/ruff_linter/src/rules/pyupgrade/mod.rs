@@ -17,7 +17,7 @@ mod tests {
 
     use crate::registry::Rule;
     use crate::rules::{isort, pyupgrade};
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::{test_path, test_snippet};
     use crate::{assert_diagnostics, assert_diagnostics_diff, settings};
 
@@ -135,7 +135,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("pyupgrade").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 unresolved_target_version: PythonVersion::PY312.into(),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
@@ -151,7 +151,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("pyupgrade").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
         )?;
@@ -184,11 +184,10 @@ mod tests {
             snapshot,
             Path::new("pyupgrade").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Disabled,
                 ..settings::LinterSettings::for_rule(rule_code)
             },
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
         );

@@ -8,6 +8,7 @@ use ruff_python_ast::token::Tokens;
 use crate::PyFormatOptions;
 use crate::comments::Comments;
 use crate::other::interpolated_string::InterpolatedStringContext;
+use crate::preview::FormatterPreviewFeature;
 
 pub struct PyFormatContext<'a> {
     options: PyFormatOptions,
@@ -109,8 +110,13 @@ impl<'a> PyFormatContext<'a> {
     }
 
     /// Returns `true` if preview mode is enabled.
-    pub(crate) const fn is_preview(&self) -> bool {
+    pub(crate) fn is_preview(&self) -> bool {
         self.options.preview().is_enabled()
+    }
+
+    /// Returns `true` if the given preview feature is enabled.
+    pub(crate) fn is_preview_feature_enabled(&self, feature: FormatterPreviewFeature) -> bool {
+        self.options.preview().is_feature_enabled(feature)
     }
 }
 

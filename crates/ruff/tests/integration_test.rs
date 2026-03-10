@@ -2630,6 +2630,94 @@ fn pyproject_toml_stdin_schema_error_fix_only() {
 }
 
 #[test]
+fn preview_enable_single_feature_via_cli() {
+    // With preview disabled globally, enabling a single feature via CLI should work
+    let mut cmd = RuffCheck::default().build();
+    assert_cmd_snapshot!(cmd
+        .args(["--preview-enable", "fix-builtin-open", "--select", "E741"])
+        .pass_stdin("l = 1"), @"
+    success: false
+    exit_code: 1
+    ----- stdout -----
+    E741 Ambiguous variable name: `l`
+     --> -:1:1
+      |
+    1 | l = 1
+      | ^
+      |
+
+    Found 1 error.
+
+    ----- stderr -----
+    ");
+}
+
+#[test]
+fn preview_exclude_feature_via_cli() -> Result<()> {
+    // With preview enabled globally, excluding a feature should be accepted
+    let tempdir = TempDir::new()?;
+    let pyproject_toml = tempdir.path().join("pyproject.toml");
+    fs::write(
+        &pyproject_toml,
+        r"
+[tool.ruff]
+preview = true
+",
+    )?;
+    let mut cmd = RuffCheck::default().config(&pyproject_toml).build();
+    assert_cmd_snapshot!(cmd
+        .args(["--preview-exclude", "fix-builtin-open", "--select", "E741"])
+        .pass_stdin("l = 1"), @"
+    success: false
+    exit_code: 1
+    ----- stdout -----
+    E741 Ambiguous variable name: `l`
+     --> -:1:1
+      |
+    1 | l = 1
+      | ^
+      |
+
+    Found 1 error.
+
+    ----- stderr -----
+    ");
+    Ok(())
+}
+
+#[test]
+fn preview_enable_via_toml_granular() -> Result<()> {
+    let tempdir = TempDir::new()?;
+    let pyproject_toml = tempdir.path().join("pyproject.toml");
+    fs::write(
+        &pyproject_toml,
+        r#"
+[tool.ruff.lint]
+preview = { enable = ["fix-builtin-open"] }
+"#,
+    )?;
+    let mut cmd = RuffCheck::default().config(&pyproject_toml).build();
+    assert_cmd_snapshot!(cmd
+        .args(["--select", "E741"])
+        .pass_stdin("l = 1"), @"
+    success: false
+    exit_code: 1
+    ----- stdout -----
+    E741 Ambiguous variable name: `l`
+     --> -:1:1
+      |
+    1 | l = 1
+      | ^
+      |
+
+    Found 1 error.
+
+    ----- stderr -----
+    ");
+    Ok(())
+}
+
+#[test]
 fn pyproject_toml_stdin_schema_error_fix_diff() {
     let mut cmd = RuffCheck::default()
         .args([

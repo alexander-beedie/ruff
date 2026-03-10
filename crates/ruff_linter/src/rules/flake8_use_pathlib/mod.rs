@@ -13,7 +13,7 @@ mod tests {
 
     use crate::registry::Rule;
     use crate::settings;
-    use crate::settings::types::PreviewMode;
+    use crate::settings::types::{LintPreviewConfig, PreviewMode};
     use crate::test::test_path;
     use crate::{assert_diagnostics, assert_diagnostics_diff};
 
@@ -114,7 +114,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("flake8_use_pathlib").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rules(vec![
                     Rule::OsPathAbspath,
                     Rule::OsChmod,
@@ -163,7 +163,7 @@ mod tests {
         let diagnostics = test_path(
             Path::new("flake8_use_pathlib").join(path).as_path(),
             &settings::LinterSettings {
-                preview: PreviewMode::Enabled,
+                preview: LintPreviewConfig::from(PreviewMode::Enabled),
                 ..settings::LinterSettings::for_rule(rule_code)
             },
         )?;
